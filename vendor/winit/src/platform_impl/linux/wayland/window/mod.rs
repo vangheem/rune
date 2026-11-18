@@ -426,6 +426,12 @@ impl Window {
         self.window_state.lock().unwrap().is_decorated()
     }
 
+    /// Rune: see `WindowExtWayland::content_corner_radius`.
+    #[inline]
+    pub fn content_corner_radius(&self) -> f32 {
+        self.window_state.lock().unwrap().content_corner_radius()
+    }
+
     #[inline]
     pub fn set_window_level(&self, _level: WindowLevel) {}
 

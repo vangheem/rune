@@ -81,6 +81,15 @@ impl<T> EventLoopBuilderExtWayland for EventLoopBuilder<T> {
 pub trait WindowExtWayland {
     /// Returns `xdg_toplevel` of the window or [`None`] if the window is X11 window.
     fn xdg_toplevel(&self) -> Option<NonNull<c_void>>;
+
+    /// Rune: the radius, in logical points, of the arc the window's content takes at its bottom
+    /// corners. A client-side frame (`sctk-adwaita`) draws a one-point border around the window
+    /// and rounds its corners while it floats, so the content's own square corners would show
+    /// past it.
+    ///
+    /// Zero when the frame draws the window square (maximized or tiled), when no client-side
+    /// frame is drawn (server side decorations, or decorations off), and on X11.
+    fn content_corner_radius(&self) -> f32;
 }
 
 impl WindowExtWayland for Window {
@@ -92,6 +101,17 @@ impl WindowExtWayland for Window {
             crate::platform_impl::Window::X(_) => None,
             #[cfg(wayland_platform)]
             crate::platform_impl::Window::Wayland(window) => window.xdg_toplevel(),
+        }
+    }
+
+    #[inline]
+    fn content_corner_radius(&self) -> f32 {
+        #[allow(clippy::single_match)]
+        match &self.window {
+            #[cfg(x11_platform)]
+            crate::platform_impl::Window::X(_) => 0.,
+            #[cfg(wayland_platform)]
+            crate::platform_impl::Window::Wayland(window) => window.content_corner_radius(),
         }
     }
 }

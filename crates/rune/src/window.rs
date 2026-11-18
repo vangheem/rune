@@ -48,6 +48,7 @@ mod win;
 use win::{SurfaceRetries, SurfaceStep, SURFACE_TRIES, Win};
 mod first_frame;
 use first_frame::FirstFrame;
+mod corners;
 mod draw;
 mod loop_frame;
 use loop_frame::LoopFrame;

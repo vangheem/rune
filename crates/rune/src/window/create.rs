@@ -22,6 +22,11 @@ impl<S: 'static> Host<S> {
                 attrs = winit::platform::wayland::WindowAttributesExtWayland::with_name(attrs, id, id);
                 attrs = winit::platform::x11::WindowAttributesExtX11::with_name(attrs, id, id);
             }
+            // A decorated Wayland window's frame rounds its corners: the content clears outside
+            // them, which needs a surface that composites what it leaves.
+            if self.rounds_corners() && !self.options.transparent {
+                attrs = attrs.with_transparent(true);
+            }
             if self.float_on_open { attrs = float_on_open::fixed(attrs, &self.options, size); }
             if let Some(token) = token {
                 let token = winit::window::ActivationToken::from_raw(token);
@@ -124,7 +129,7 @@ impl<S: 'static> Host<S> {
             }
             None => {
                 let features = self.comp.as_ref().map_or(wgpu::Features::empty(), |c| c.features());
-                let transparent = self.options.transparent;
+                let transparent = self.wants_alpha();
                 // A shared device that can't composite this window's translucent pixels gets its own.
                 let cached = self.gpu_pool.borrow().upgrade().filter(|gpu| !gpu.is_lost()).and_then(|gpu| {
                     let surface = gpu.instance.create_surface(window.clone()).ok()?;
@@ -149,9 +154,9 @@ impl<S: 'static> Host<S> {
             .ok_or("the GPU adapter can't present to this window")?;
         #[cfg(target_os = "macos")]
         let launch_drawables = LaunchDrawables::cap(&mut config);
-        if self.options.transparent {
+        if self.wants_alpha() {
             config.alpha_mode = translucent.unwrap_or_else(|| {
-                eprintln!("transparency unavailable for {}; using an opaque window", self.native_handle.key());
+                eprintln!("transparency unavailable for {}; drawing it opaque", self.native_handle.key());
                 wgpu::CompositeAlphaMode::Opaque
             });
             self.rt.transparent = config.alpha_mode != wgpu::CompositeAlphaMode::Opaque;
@@ -165,6 +170,9 @@ impl<S: 'static> Host<S> {
             renderer.set_srgb_blend(self.rt.srgb_blend());
             self.gpu = Some((gpu, renderer));
         }
+        // A decorated Wayland window asks for a translucent surface even when the app didn't
+        // (`corners`), so this is asked before the device is borrowed below.
+        let wants_alpha = self.wants_alpha();
         let (gpu, renderer) = self.gpu.as_mut().unwrap();
         rebuild_renderer(&gpu.device, renderer, target_format, &mut self.rt);
         // A refused configuration (the driver's, or a device that is gone) leaves a surface
@@ -184,7 +192,7 @@ impl<S: 'static> Host<S> {
         crate::platform::macos::window_shape::apply_corners(&window, &self.macos_window, self.options.transparent, self.options.borderless);
         // Metal's PostMultiplied mode only makes CAMetalLayer non-opaque; Core Animation
         // still composites premultiplied pixels. Other backends follow wgpu's straight-alpha contract.
-        let alpha = alpha_pass(gpu, self.options.transparent, &config, target_format);
+        let alpha = alpha_pass(gpu, wants_alpha, &config, target_format);
         let scale = window.scale_factor() as f32;
         self.rt.set_system_dark(crate::platform::preferences::window_dark(&window, self.args.theme.as_deref()));
         self.rt.set_viewport((phys.width as f32 / scale, phys.height as f32 / scale), scale);
@@ -253,6 +261,7 @@ impl<S: 'static> Host<S> {
             hidden_pace: HiddenPace::default(),
             cursor: crate::cursor::os::OsCursor::new(),
             alpha,
+            corners: None,
             timer_frame: TimerFrame::default(),
             loop_frame: LoopFrame::default(),
             presented: None,
@@ -343,13 +352,15 @@ impl<S: 'static> Host<S> {
         // (`Dx12SwapchainKind::DxgiFromVisual`), so the replacement can only be configured once
         // the old swapchain has let go of it.
         w.alpha = None;
+        // A pass made on the device that went with it draws nothing: it goes too.
+        w.corners = None;
         w.presented = None;
         drop(w.surface.take());
         self.gpu = None;
         self.rt.text.atlas.invalidate();
         self.rt.images.invalidate();
         let features = self.comp.as_ref().map_or(wgpu::Features::empty(), |c| c.features());
-        let transparent = self.options.transparent;
+        let transparent = self.wants_alpha();
         // A window the CPU handed to the GPU keeps its DirectComposition target: the new swap
         // chain goes on the same visual, committed once it has presented (`SurfaceMode::rebind`).
         // wgpu has the composition-visual target only on Windows.

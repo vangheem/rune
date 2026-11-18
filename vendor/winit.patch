@@ -395,3 +395,86 @@ index 6d60c1c5..8b63fa59 100644
  
          super::set_window_long(
              window,
+diff --git a/src/platform/wayland.rs b/src/platform/wayland.rs
+index 9c1a8e43..9fe438c0 100644
+--- a/src/platform/wayland.rs
++++ b/src/platform/wayland.rs
+@@ -81,6 +81,15 @@ impl<T> EventLoopBuilderExtWayland for EventLoopBuilder<T> {
+ pub trait WindowExtWayland {
+     /// Returns `xdg_toplevel` of the window or [`None`] if the window is X11 window.
+     fn xdg_toplevel(&self) -> Option<NonNull<c_void>>;
++
++    /// Rune: the radius, in logical points, of the arc the window's content takes at its bottom
++    /// corners. A client-side frame (`sctk-adwaita`) draws a one-point border around the window
++    /// and rounds its corners while it floats, so the content's own square corners would show
++    /// past it.
++    ///
++    /// Zero when the frame draws the window square (maximized or tiled), when no client-side
++    /// frame is drawn (server side decorations, or decorations off), and on X11.
++    fn content_corner_radius(&self) -> f32;
+ }
+ 
+ impl WindowExtWayland for Window {
+@@ -94,6 +103,17 @@ impl WindowExtWayland for Window {
+             crate::platform_impl::Window::Wayland(window) => window.xdg_toplevel(),
+         }
+     }
++
++    #[inline]
++    fn content_corner_radius(&self) -> f32 {
++        #[allow(clippy::single_match)]
++        match &self.window {
++            #[cfg(x11_platform)]
++            crate::platform_impl::Window::X(_) => 0.,
++            #[cfg(wayland_platform)]
++            crate::platform_impl::Window::Wayland(window) => window.content_corner_radius(),
++        }
++    }
+ }
+ 
+ /// Additional methods on [`WindowAttributes`] that are specific to Wayland.
+diff --git a/src/platform_impl/linux/wayland/window/mod.rs b/src/platform_impl/linux/wayland/window/mod.rs
+index 6d29a5a5..e552c39e 100644
+--- a/src/platform_impl/linux/wayland/window/mod.rs
++++ b/src/platform_impl/linux/wayland/window/mod.rs
+@@ -426,6 +426,12 @@ impl Window {
+         self.window_state.lock().unwrap().is_decorated()
+     }
+ 
++    /// Rune: see `WindowExtWayland::content_corner_radius`.
++    #[inline]
++    pub fn content_corner_radius(&self) -> f32 {
++        self.window_state.lock().unwrap().content_corner_radius()
++    }
++
+     #[inline]
+     pub fn set_window_level(&self, _level: WindowLevel) {}
+ 
+diff --git a/src/platform_impl/linux/wayland/window/state.rs b/src/platform_impl/linux/wayland/window/state.rs
+index 1ef7a065..8ed63f05 100644
+--- a/src/platform_impl/linux/wayland/window/state.rs
++++ b/src/platform_impl/linux/wayland/window/state.rs
+@@ -599,6 +599,23 @@ impl WindowState {
+         }
+     }
+ 
++    /// Rune: the radius, in logical points, of the arc the window's content takes at its bottom
++    /// corners, which the client-side frame leaves it (the frame's visible border lies just
++    /// outside it). Zero when no client-side frame is drawn, and when the frame draws the window
++    /// square: maximized or tiled.
++    #[inline]
++    pub fn content_corner_radius(&self) -> f32 {
++        #[cfg(feature = "sctk-adwaita")]
++        if let Some(frame) = self
++            .frame
++            .as_ref()
++            .filter(|frame| self.decorate && !frame.is_hidden())
++        {
++            return frame.content_corner_radius();
++        }
++        0.
++    }
++
+     /// Get the outer size of the window.
+     #[inline]
+     pub fn outer_size(&self) -> LogicalSize<u32> {

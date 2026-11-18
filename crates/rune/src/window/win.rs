@@ -80,6 +80,9 @@ pub(super) struct Win {
     pub(super) hidden_pace: HiddenPace,
     pub(super) cursor: crate::cursor::os::OsCursor,
     pub(super) alpha: Option<crate::render::surface_alpha::AlphaSurface>,
+    /// The pass that clears outside the arcs a Wayland client-side frame leaves the content's
+    /// bottom corners (`window::corners`), once a surface here composites translucent pixels.
+    pub(super) corners: Option<crate::render::csd_corners::CsdCorners>,
     /// The frame a due timer asked for, until the window draws it, and whether only it asked
     /// (`TimerFrame`).
     pub(super) timer_frame: TimerFrame,

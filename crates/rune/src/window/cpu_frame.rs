@@ -303,6 +303,7 @@ impl<S: 'static> Host<S> {
             hidden_pace: HiddenPace::default(),
             cursor: crate::cursor::os::OsCursor::new(),
             alpha: None,
+            corners: None,
             timer_frame: TimerFrame::default(),
             loop_frame: LoopFrame::default(),
             presented: None,

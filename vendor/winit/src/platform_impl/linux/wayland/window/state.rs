@@ -599,6 +599,23 @@ impl WindowState {
         }
     }
 
+    /// Rune: the radius, in logical points, of the arc the window's content takes at its bottom
+    /// corners, which the client-side frame leaves it (the frame's visible border lies just
+    /// outside it). Zero when no client-side frame is drawn, and when the frame draws the window
+    /// square: maximized or tiled.
+    #[inline]
+    pub fn content_corner_radius(&self) -> f32 {
+        #[cfg(feature = "sctk-adwaita")]
+        if let Some(frame) = self
+            .frame
+            .as_ref()
+            .filter(|frame| self.decorate && !frame.is_hidden())
+        {
+            return frame.content_corner_radius();
+        }
+        0.
+    }
+
     /// Get the outer size of the window.
     #[inline]
     pub fn outer_size(&self) -> LogicalSize<u32> {

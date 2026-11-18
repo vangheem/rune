@@ -1,0 +1,267 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index a50e538..cb7d4c7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -143,6 +143,18 @@ where
+         self.dirty = true;
+     }
+ 
++    /// The radius, in logical points, of the arc this frame leaves the window's content at its
++    /// bottom corners: the visible border is drawn within one point outside it. Zero when the
++    /// frame draws the window square, as a maximized or tiled one is (and as the headerbar's top
++    /// corners are).
++    pub fn content_corner_radius(&self) -> f32 {
++        if self.state.intersects(WindowState::MAXIMIZED | WindowState::TILED) {
++            0.
++        } else {
++            CONTENT_CORNER_RADIUS as f32
++        }
++    }
++
+     fn precise_location(
+         &self,
+         location: Location,
+@@ -296,38 +308,58 @@ where
+                     // The visible border is one pt.
+                     let visible_border_size = VISIBLE_BORDER_SIZE * scale;
+ 
++                    // The border follows the window's rounded bottom corners, which the content
++                    // leaves to it (`AdwaitaFrame::content_corner_radius` and
++                    // `CONTENT_CORNER_RADIUS`); the headerbar above rounds the top ones the same
++                    // way, and a maximized or tiled window is square.
++                    let radius = if self.state.intersects(WindowState::MAXIMIZED | WindowState::TILED) {
++                        0.
++                    } else {
++                        CORNER_RADIUS as f32 * scale as f32
++                    };
++                    let rounded = radius >= visible_border_size as f32;
++
+                     // XXX we do all the match using integral types and then convert to f32 in the
+                     // end to ensure that result is finite.
+                     let border_rect = match border {
+-                        DecorationParts::LEFT => {
+-                            let x = (rect.x.unsigned_abs() * scale) - visible_border_size;
++                        DecorationParts::LEFT | DecorationParts::RIGHT => {
+                             let y = rect.y.unsigned_abs() * scale;
+-                            Rect::from_xywh(
+-                                x as f32,
+-                                y as f32,
+-                                visible_border_size as f32,
+-                                (rect.height - y) as f32,
+-                            )
+-                        }
+-                        DecorationParts::RIGHT => {
+-                            let y = rect.y.unsigned_abs() * scale;
+-                            Rect::from_xywh(
+-                                0.,
+-                                y as f32,
+-                                visible_border_size as f32,
+-                                (rect.height - y) as f32,
+-                            )
++                            // The bottom corner's arc starts this far above the bottom edge.
++                            let corner = radius - visible_border_size as f32;
++                            let height = (rect.height - y) as f32 - corner;
++                            let x = if border == DecorationParts::LEFT {
++                                (rect.x.unsigned_abs() * scale) - visible_border_size
++                            } else {
++                                0
++                            };
++                            Rect::from_xywh(x as f32, y as f32, visible_border_size as f32, height)
+                         }
+                         // We draw small visible border only bellow the window surface, no need to
+                         // handle `TOP`.
+                         DecorationParts::BOTTOM => {
+-                            let x = (rect.x.unsigned_abs() * scale) - visible_border_size;
+-                            Rect::from_xywh(
+-                                x as f32,
+-                                0.,
+-                                (rect.width - 2 * x) as f32,
+-                                visible_border_size as f32,
+-                            )
++                            let left = ((rect.x.unsigned_abs() * scale) - visible_border_size) as f32;
++                            let right = rect.width as f32 - left;
++                            let bottom = (CORNER_RADIUS * scale) as f32;
++                            if rounded {
++                                if let Some(shape) = bottom_border_shape(
++                                    left,
++                                    right,
++                                    bottom,
++                                    visible_border_size as f32,
++                                    radius,
++                                ) {
++                                    pixmap.fill_path(
++                                        &shape,
++                                        &border_paint,
++                                        FillRule::EvenOdd,
++                                        Transform::identity(),
++                                        None,
++                                    );
++                                }
++                                None
++                            } else {
++                                Rect::from_xywh(left, bottom, right - left, visible_border_size as f32)
++                            }
+                         }
+                         _ => None,
+                     };
+@@ -770,6 +802,81 @@ fn rounded_headerbar_shape(x: f32, y: f32, width: f32, height: f32, radius: f32)
+     pb.finish()
+ }
+ 
++/// The radius, in logical points, of the arc a frame leaves the window's content at its bottom
++/// corners. The frame's one-point visible border is drawn just outside that arc, so the window's
++/// own corners are [`VISIBLE_BORDER_SIZE`] more, and the shadow's rounded cut-out is the same
++/// disc.
++pub const CONTENT_CORNER_RADIUS: u32 = CORNER_RADIUS - VISIBLE_BORDER_SIZE;
++
++/// The visible border under a window whose bottom corners are rounded with `radius`: a one-point
++/// band along `bottom`, the content's bottom edge, from `left` to `right`, the window's outer
++/// edges, curving around each corner outside the arc the content leaves (centred one radius inside
++/// the window's corner, so the band sits between that arc and the shadow).
++fn bottom_border_shape(
++    left: f32,
++    right: f32,
++    bottom: f32,
++    border: f32,
++    radius: f32,
++) -> Option<Path> {
++    // https://stackoverflow.com/a/27863181, as `rounded_headerbar_shape`.
++    let k = 0.552_284_8;
++    let outer = bottom + border;
++    let (outer_radius, inner_radius) = (radius, radius - border);
++    // One disc per corner: its centre is the content's arc centre, `outer` less the outer radius.
++    let centre_y = outer - outer_radius;
++    let (left_centre, right_centre) = (left + outer_radius, right - outer_radius);
++
++    let mut pb = PathBuilder::new();
++    // The window's outline: down the left edge, around the corner, along the bottom, around the
++    // other corner, and up the right edge.
++    pb.move_to(left, 0.);
++    pb.line_to(left, centre_y);
++    pb.cubic_to(
++        left,
++        centre_y + k * outer_radius,
++        left_centre - k * outer_radius,
++        outer,
++        left_centre,
++        outer,
++    );
++    pb.line_to(right_centre, outer);
++    pb.cubic_to(
++        right_centre + k * outer_radius,
++        outer,
++        right,
++        centre_y + k * outer_radius,
++        right,
++        centre_y,
++    );
++    pb.line_to(right, 0.);
++    pb.close();
++    // And the content's, one point inside it: filling both even-odd leaves the border between.
++    pb.move_to(left + border, 0.);
++    pb.line_to(left + border, centre_y);
++    pb.cubic_to(
++        left + border,
++        centre_y + k * inner_radius,
++        left_centre - k * inner_radius,
++        bottom,
++        left_centre,
++        bottom,
++    );
++    pb.line_to(right_centre, bottom);
++    pb.cubic_to(
++        right_centre + k * inner_radius,
++        bottom,
++        right - border,
++        centre_y + k * inner_radius,
++        right - border,
++        centre_y,
++    );
++    pb.line_to(right - border, 0.);
++    pb.close();
++
++    pb.finish()
++}
++
+ // returns horizontal margin, logical points
+ fn get_margin_h_lp(state: &WindowState) -> f32 {
+     if state.intersects(WindowState::MAXIMIZED | WindowState::TILED) {
+diff --git a/src/parts.rs b/src/parts.rs
+index 7ae54ed..e3147d9 100644
+--- a/src/parts.rs
++++ b/src/parts.rs
+@@ -9,7 +9,7 @@ use smithay_client_toolkit::{
+     subcompositor::{SubcompositorState, SubsurfaceData},
+ };
+ 
+-use crate::theme::{BORDER_SIZE, HEADER_SIZE, RESIZE_HANDLE_SIZE};
++use crate::theme::{BORDER_SIZE, CORNER_RADIUS, HEADER_SIZE, RESIZE_HANDLE_SIZE};
+ use crate::{pointer::Location, wl_typed::WlTyped};
+ 
+ /// The decoration's 'parts'.
+@@ -101,11 +101,13 @@ impl DecorationParts {
+                     x: -(BORDER_SIZE as i32),
+                     y: 0,     // Defined by `Self::resize`.
+                     width: 0, // Defined by `Self::resize`.
+-                    height: BORDER_SIZE,
++                    // Reaches above the window's bottom edge, so the visible border can follow the
++                    // rounded corners the content leaves it (`Self::resize`).
++                    height: BORDER_SIZE + CORNER_RADIUS,
+                 },
+                 Some(Rect {
+                     x: BORDER_SIZE as i32 - RESIZE_HANDLE_SIZE as i32,
+-                    y: 0,
++                    y: CORNER_RADIUS as i32,
+                     width: 0, // Defined by `Self::resize`,
+                     height: RESIZE_HANDLE_SIZE,
+                 }),
+@@ -154,7 +156,9 @@ impl DecorationParts {
+         self.parts[Self::HEADER].surface_rect.width = width;
+ 
+         self.parts[Self::BOTTOM].surface_rect.width = width + 2 * BORDER_SIZE;
+-        self.parts[Self::BOTTOM].surface_rect.y = height as i32;
++        // `CORNER_RADIUS` above the window's bottom edge, where its rounded corners are: the
++        // visible border is drawn in that part of it.
++        self.parts[Self::BOTTOM].surface_rect.y = height as i32 - CORNER_RADIUS as i32;
+         self.parts[Self::BOTTOM].input_rect.as_mut().unwrap().width =
+             self.parts[Self::BOTTOM].surface_rect.width - (BORDER_SIZE * 2)
+                 + (RESIZE_HANDLE_SIZE * 2);
+diff --git a/src/shadow.rs b/src/shadow.rs
+index efa9133..428f54c 100644
+--- a/src/shadow.rs
++++ b/src/shadow.rs
+@@ -264,12 +264,15 @@ impl RenderedShadow {
+                     .saturating_sub(left_edge_width)
+                     .saturating_sub(right_edge_width);
+ 
++                // The part reaches `corner_radius` above the window's bottom edge, where the
++                // visible border rounds its corners: the shadow below the window stays where it
++                // is, so it starts that far into the part.
+                 self.edges_draw(
+                     0,
+                     edges_half as isize + (corner_radius - visible_border_size) as isize,
+                     dst_pixmap,
+                     0,
+-                    0,
++                    corner_radius,
+                     left_edge_width,
+                     dst_height,
+                 );
+@@ -280,7 +283,7 @@ impl RenderedShadow {
+                     side_width,
+                     dst_pixmap,
+                     left_edge_width,
+-                    visible_border_size,
++                    corner_radius + visible_border_size,
+                 );
+ 
+                 self.edges_draw(
+@@ -288,7 +291,7 @@ impl RenderedShadow {
+                     edges_half as isize + (corner_radius - visible_border_size) as isize,
+                     dst_pixmap,
+                     left_edge_width + side_width,
+-                    0,
++                    corner_radius,
+                     right_edge_width,
+                     dst_height,
+                 );
