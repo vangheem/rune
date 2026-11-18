@@ -71,7 +71,13 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(super) fn latch_live(&mut self, pending: bool) -> bool {
-        if !self.surface_visible || self.live_subscriptions.is_empty() { return false; }
+        if !self.surface_visible { return false; }
+        // Nothing bound to read: a value a live-only event published has nowhere to land, so
+        // it mustn't keep the window drawing.
+        if self.live_subscriptions.is_empty() {
+            self.live_dirty = false;
+            return false;
+        }
         if !pending && !self.live_dirty { return false; }
         self.live_dirty = false;
         for node in &mut self.nodes {
